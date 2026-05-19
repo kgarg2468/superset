@@ -3,13 +3,16 @@ import { buildHostRoutingKey } from "@superset/shared/host-routing";
 import { useLiveQuery } from "@tanstack/react-db";
 import { useMemo } from "react";
 import { useRelayUrl } from "renderer/hooks/useRelayUrl";
+import { electronTrpc } from "renderer/lib/electron-trpc";
 import type { PaneViewerData } from "renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/types";
 import { useCollections } from "renderer/routes/_authenticated/providers/CollectionsProvider";
 import { useLocalHostService } from "renderer/routes/_authenticated/providers/LocalHostServiceProvider";
+import { NOTIFICATION_EVENTS } from "shared/constants";
 import {
 	HostNotificationSubscriber,
 	type HostNotificationWorkspaceState,
 } from "./components/HostNotificationSubscriber";
+import { handleV2AgentLifecycleStatusEvent } from "./lib/lifecycleEvents";
 
 interface WorkspaceHostRow {
 	workspaceId: string;
@@ -60,6 +63,14 @@ export function V2NotificationController() {
 				})),
 		[collections],
 	);
+	const workspaceStatesById = useMemo(
+		() =>
+			getNotificationWorkspaceStatesById({
+				workspaceHosts,
+				localWorkspaceRows,
+			}),
+		[workspaceHosts, localWorkspaceRows],
+	);
 	const hostGroups = useMemo(
 		() =>
 			groupWorkspacesByHostUrl({
@@ -72,6 +83,31 @@ export function V2NotificationController() {
 		[workspaceHosts, localWorkspaceRows, machineId, activeHostUrl, relayUrl],
 	);
 
+	electronTrpc.notifications.subscribe.useSubscription(undefined, {
+		onData: (event) => {
+			if (event.type !== NOTIFICATION_EVENTS.AGENT_LIFECYCLE) return;
+			const data = event.data;
+			if (!data?.workspaceId || !data.terminalId) return;
+			const workspace = workspaceStatesById.get(data.workspaceId);
+			if (!workspace) return;
+
+			// Adopted shells keep their launch-time host-service hook URL. When
+			// that URL is stale, the Electron fallback still has terminal context.
+			handleV2AgentLifecycleStatusEvent({
+				workspaceId: data.workspaceId,
+				payload: {
+					eventType:
+						data.eventType === "PendingQuestion"
+							? "PermissionRequest"
+							: data.eventType,
+					terminalId: data.terminalId,
+					occurredAt: Date.now(),
+				},
+				paneLayout: workspace.paneLayout,
+			});
+		},
+	});
+
 	return (
 		<>
 			{hostGroups.map((group) => (
@@ -82,6 +118,36 @@ export function V2NotificationController() {
 				/>
 			))}
 		</>
+	);
+}
+
+function getNotificationWorkspaceStatesById({
+	workspaceHosts,
+	localWorkspaceRows,
+}: {
+	workspaceHosts: WorkspaceHostRow[];
+	localWorkspaceRows: Array<{
+		workspaceId: string;
+		paneLayout: unknown;
+	}>;
+}): Map<string, HostNotificationWorkspaceState> {
+	const paneLayoutsByWorkspaceId = new Map(
+		localWorkspaceRows.map((row) => [
+			row.workspaceId,
+			row.paneLayout as WorkspaceState<PaneViewerData>,
+		]),
+	);
+
+	return new Map(
+		workspaceHosts.map((workspace) => [
+			workspace.workspaceId,
+			{
+				workspaceId: workspace.workspaceId,
+				workspaceName:
+					workspace.name.trim() || workspace.branch.trim() || "Workspace",
+				paneLayout: paneLayoutsByWorkspaceId.get(workspace.workspaceId) ?? null,
+			},
+		]),
 	);
 }
 

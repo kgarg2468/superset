@@ -41,9 +41,10 @@ describe("getNotifyScriptContent", () => {
 			'if [ -n "$SUPERSET_HOST_AGENT_HOOK_URL" ] && [ -n "$SUPERSET_TERMINAL_ID" ]; then',
 		);
 		expect(script).toContain(
-			'[ -z "$SUPERSET_TAB_ID" ] && [ -z "$SESSION_ID" ] && exit 0',
+			'[ -z "$SUPERSET_TAB_ID" ] && [ -z "$SESSION_ID" ] && [ -z "$SUPERSET_TERMINAL_ID" ] && exit 0',
 		);
 		expect(script).toContain("/hook/complete");
+		expect(script).toContain("terminalId=$SUPERSET_TERMINAL_ID");
 		expect(script).toContain("SUPERSET_TAB_ID");
 		expect(script).toContain("SUPERSET_PANE_ID");
 	});
@@ -71,6 +72,7 @@ describe("per-agent hook scripts dispatch to v2", () => {
 			expect(script).toContain("/hook/complete");
 			expect(script).toContain('V1_EVENT_TYPE="$EVENT_TYPE"');
 			expect(script).toContain("eventType=$V1_EVENT_TYPE");
+			expect(script).toContain("terminalId=$SUPERSET_TERMINAL_ID");
 			expect(script).toContain("SUPERSET_TAB_ID");
 			expect(script).toContain("SUPERSET_PANE_ID");
 		});
